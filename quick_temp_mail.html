@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="bn">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Quick Temp Mail</title>
+<style>
+:root{color-scheme:dark;--bg:#0b1220;--panel:#121d30;--line:#263650;--muted:#9aabc2;--accent:#55d6be}
+*{box-sizing:border-box}body{margin:0;background:linear-gradient(135deg,#0b1220,#14243a);font:16px system-ui,Arial;color:#edf5ff;min-height:100vh;padding:28px 14px}
+main{max-width:850px;margin:auto}.card{background:#121d30;border:1px solid var(--line);border-radius:18px;padding:22px;margin:16px 0;box-shadow:0 12px 35px #0003}
+h1{margin:0 0 8px;font-size:30px}p{color:var(--muted);line-height:1.6}.row{display:flex;gap:10px;flex-wrap:wrap}
+input,select,button{font:inherit;border-radius:10px;padding:12px;border:1px solid var(--line);background:#0c1728;color:#fff}
+input{flex:1;min-width:180px}button{background:var(--accent);color:#06221e;border:0;font-weight:700;cursor:pointer}button.secondary{background:#263650;color:#edf5ff}button:disabled{opacity:.5;cursor:not-allowed}
+#address{font-weight:700;color:var(--accent);font-size:19px;overflow-wrap:anywhere}
+#status{min-height:24px;color:#ffd27d}.mail{border:1px solid var(--line);border-radius:12px;padding:14px;margin:10px 0;cursor:pointer}.mail:hover{border-color:var(--accent)}.mail strong{display:block}.mail small{color:var(--muted)}#body{white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.6;color:#dce8f8}
+footer{text-align:center;color:var(--muted);font-size:13px;padding:18px}a{color:var(--accent)}
+</style>
+</head>
+<body>
+<main>
+  <h1>📨 Quick Temp Mail</h1>
+  <p>এক ক্লিকে অস্থায়ী ইমেইল তৈরি করুন এবং ইনবক্সে আসা মেসেজ পড়ুন।</p>
+
+  <section class="card">
+    <div class="row">
+      <input id="username" placeholder="ইমেইল নাম (ঐচ্ছিক), যেমন: ibrahim123" maxlength="30">
+      <button id="createBtn" onclick="createInbox()">নতুন ইমেইল তৈরি</button>
+    </div>
+    <p id="status" role="status">প্রথমে নতুন ইমেইল তৈরি করুন।</p>
+    <div id="address"></div>
+    <div class="row" style="margin-top:14px">
+      <button class="secondary" onclick="copyAddress()" id="copyBtn" disabled>ইমেইল কপি</button>
+      <button class="secondary" onclick="loadMessages()" id="refreshBtn" disabled>ইনবক্স রিফ্রেশ</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="row" style="justify-content:space-between;align-items:center">
+      <h2 style="margin:0">ইনবক্স</h2><small id="count">0 টি মেসেজ</small>
+    </div>
+    <div id="messages"><p>এখনো কোনো ইমেইল নেই।</p></div>
+  </section>
+
+  <section class="card" id="reader" hidden>
+    <h2 id="subject">মেসেজ</h2>
+    <p id="sender"></p>
+    <div id="body"></div>
+  </section>
+
+  <footer>Powered by <a href="https://mail.tm/" target="_blank" rel="noopener">mail.tm</a> API. এই ইনবক্সটি অস্থায়ী; গুরুত্বপূর্ণ বা ব্যক্তিগত অ্যাকাউন্টের জন্য ব্যবহার করবেন না।</footer>
+</main>
+<script>
+const API = "https://api.mail.tm";
+let token = "", currentAddress = "", busy = false;
+
+async function api(path, options={}) {
+  const headers = {...(options.headers || {})};
+  if (token) headers.Authorization = "Bearer " + token;
+  if (options.body) headers["Content-Type"] = "application/json";
+  const response = await fetch(API + path, {...options, headers});
+  const data = response.status === 204 ? null : await response.json().catch(()=>({}));
+  if (!response.ok) throw new Error(data.detail || data.message || `Request failed (${response.status})`);
+  return data;
+}
+function status(message){ document.getElementById("status").textContent = message; }
+
+async function createInbox(){
+  if (busy) return;
+  busy = true;
+  const btn = document.getElementById("createBtn");
+  btn.disabled = true; status("ইমেইল তৈরি হচ্ছে...");
+  document.getElementById("messages").innerHTML = "<p>ইনবক্স লোড হচ্ছে...</p>";
+  document.getElementById("reader").hidden = true;
+  try {
+    const domainData = await api("/domains");
+    const domains = (domainData["hydra:member"] || []).filter(d => d.isActive);
+    if (!domains.length) throw new Error("এখন কোনো সক্রিয় ডোমেইন পাওয়া যায়নি। পরে চেষ্টা করুন।");
+    const chosenDomain = domains[Math.floor(Math.random()*domains.length)].domain;
+    let name = document.getElementById("username").value.trim().toLowerCase();
+    name = name.replace(/[^a-z0-9._-]/g,"").slice(0,30);
+    if (!name) name = "user" + Math.random().toString(36).slice(2,10);
+    const address = name + "@" + chosenDomain;
+    const password = (crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2)) + "Aa9!";
+    await api("/accounts", {method:"POST", body:JSON.stringify({address,password})});
+    const auth = await api("/token", {method:"POST", body:JSON.stringify({address,password})});
+    token = auth.token; currentAddress = address;
+    document.getElementById("address").textContent = address;
+    document.getElementById("copyBtn").disabled = false;
+    document.getElementById("refreshBtn").disabled = false;
+    status("ইমেইল তৈরি হয়েছে। নতুন মেসেজ এলে রিফ্রেশ করুন।");
+    await loadMessages();
+  } catch(e) {
+    status("সমস্যা: " + e.message);
+    document.getElementById("messages").innerHTML = "<p>ইনবক্স তৈরি করা যায়নি। কিছুক্ষণ পর আবার চেষ্টা করুন।</p>";
+  } finally { busy = false; btn.disabled = false; }
+}
+
+async function loadMessages(){
+  if (!token) return;
+  const box = document.getElementById("messages");
+  box.innerHTML = "<p>মেসেজ খোঁজা হচ্ছে...</p>";
+  try {
+    const data = await api("/messages");
+    const list = data["hydra:member"] || [];
+    document.getElementById("count").textContent = list.length + " টি মেসেজ";
+    if (!list.length) { box.innerHTML = "<p>এখনো কোনো ইমেইল আসেনি। কিছুক্ষণ পর রিফ্রেশ করুন।</p>"; return; }
+    box.innerHTML = "";
+    list.forEach(msg => {
+      const item = document.createElement("div");
+      item.className = "mail";
+      const subject = document.createElement("strong");
+      subject.textContent = msg.subject || "(বিষয় নেই)";
+      const from = document.createElement("small");
+      from.textContent = "প্রেরক: " + (msg.from?.address || "অজানা") + " • " + new Date(msg.createdAt).toLocaleString();
+      const intro = document.createElement("p");
+      intro.style.margin = "8px 0 0";
+      intro.textContent = msg.intro || "";
+      item.append(subject, from, intro);
+      item.addEventListener("click", () => readMessage(msg.id));
+      box.appendChild(item);
+    });
+    status("ইনবক্স আপডেট হয়েছে।");
+  } catch(e) { box.innerHTML = "<p>মেসেজ লোড হয়নি: " + escapeText(e.message) + "</p>"; }
+}
+async function readMessage(id){
+  try {
+    const msg = await api("/messages/" + encodeURIComponent(id));
+    document.getElementById("subject").textContent = msg.subject || "(বিষয় নেই)";
+    document.getElementById("sender").textContent = "প্রেরক: " + (msg.from?.address || "অজানা");
+    const body = document.getElementById("body");
+    body.textContent = msg.text || "";
+    if (!body.textContent && msg.html?.length) body.textContent = msg.html.join("\n").replace(/<[^>]*>/g," ").replace(/&nbsp;/g," ");
+    if (!body.textContent) body.textContent = "এই মেসেজে দেখানোর মতো টেক্সট নেই।";
+    document.getElementById("reader").hidden = false;
+    document.getElementById("reader").scrollIntoView({behavior:"smooth"});
+  } catch(e) { status("মেসেজ খোলা যায়নি: " + e.message); }
+}
+async function copyAddress(){
+  if (!currentAddress) return;
+  try { await navigator.clipboard.writeText(currentAddress); status("ইমেইল কপি হয়েছে।"); }
+  catch(e) { status("কপি করা যায়নি। ইমেইলটি সিলেক্ট করে কপি করুন।"); }
+}
+function escapeText(s){ const d=document.createElement("div"); d.textContent=s; return d.innerHTML; }
+
+// প্রতি ১৫ সেকেন্ডে ইনবক্স চেক করা হয়; API rate limit এড়াতে এর চেয়ে দ্রুত নয়।
+setInterval(()=>{ if(token) loadMessages(); },15000);
+</script>
+</body>
+</html>
